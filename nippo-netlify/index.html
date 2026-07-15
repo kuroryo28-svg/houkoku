@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>業務日誌 | KUROCHANG STUDIO</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { -webkit-font-smoothing: antialiased; }
+  input, textarea, select, button { font-family: inherit; font-size: inherit; }
+  button { cursor: pointer; border: none; background: none; }
+  input:focus, textarea:focus, select:focus { outline: 2px solid #1C2E4A; outline-offset: 1px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo } = React;
+
+// ---- palette: 藍染め帳簿 ----
+const C = {
+  indigo: "#1C2E4A", indigoDeep: "#12203A", paper: "#FAF9F4",
+  ink: "#26303B", inkFaint: "#7A828C", shu: "#B93A2B",
+  line: "#E3E0D6", mist: "#EEF0EA", profit: "#3E6B4F",
+};
+
+const CATEGORIES = [
+  { id: "music", label: "音楽教室", color: "#3D5A80" },
+  { id: "sales", label: "楽器販売", color: "#6B8F71" },
+  { id: "juku",  label: "学習塾",   color: "#8A6FA8" },
+  { id: "post",  label: "ポスティング", color: "#C08552" },
+  { id: "admin", label: "管理・その他", color: "#7A828C" },
+];
+const catOf = (id) => CATEGORIES.find((c) => c.id === id) || CATEGORIES[4];
+
+const STORAGE_KEY = "nippo-data-v2";
+
+// ---- date helpers ----
+const pad = (n) => String(n).padStart(2, "0");
+const toKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parseKey = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const weekKeyOf = (dateStr) => {
+  const d = parseKey(dateStr);
+  const day = (d.getDay() + 6) % 7;
+  const mon = new Date(d);
+  mon.setDate(d.getDate() - day);
+  return toKey(mon);
+};
+const monthKeyOf = (dateStr) => dateStr.slice(0, 7);
+const monthOfWeek = (weekKey) => monthKeyOf(weekKey);
+const fmtDate = (dateStr) => {
+  const d = parseKey(dateStr);
+  const w = ["日","月","火","水","木","金","土"][d.getDay()];
+  return `${d.getMonth() + 1}/${d.getDate()}（${w}）`;
+};
+const fmtWeekRange = (monKey) => {
+  const mon = parseKey(monKey);
+  const sun = new Date(mon);
+  sun.setDate(mon.getDate() + 6);
+  return `${mon.getMonth() + 1}/${mon.getDate()} 〜 ${sun.getMonth() + 1}/${sun.getDate()}`;
+};
+const fmtMonth = (mk) => `${mk.slice(0, 4)}年${Number(mk.slice(5))}月`;
+const fmtYen = (n) => n == null || isNaN(n) ? "—" : `¥${Math.round(n).toLocaleString()}`;
+const numOrNull = (s) => {
+  if (s === "" || s == null) return null;
+  const n = Number(String(s).replace(/[,，¥\s]/g, ""));
+  return isNaN(n) ? null : n;
+};
+
+// ---- localStorage ----
+const loadData = () => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      return { entries: [], weekMetrics: {}, monthCosts: {}, userName: "", ...d };
+    }
+  } catch (e) {}
+  return { entries: [], weekMetrics: {}, monthCosts: {}, userName: "" };
+};
+const saveData = (d) => {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); return true; }
+  catch (e) { return false; }
+};
+
+// ---- components ----
+function DateStamp({ dateStr }) {
+  const d = parseKey(dateStr);
+  return (
+    <div style={{
+      width: 52, height: 52, display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", borderRadius: "50%",
+      border: `2px solid ${C.shu}`, color: C.shu, transform: "rotate(-4deg)",
+      fontFamily: "'Hiragino Mincho ProN','Yu Mincho',serif",
+      background: "rgba(185,58,43,0.04)", userSelect: "none", flexShrink: 0,
+    }}>
+      <div style={{ fontSize: 9, lineHeight: 1, borderBottom: `1px solid ${C.shu}`, paddingBottom: 2, marginBottom: 2 }}>{d.getFullYear()}</div>
+      <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1 }}>{d.getMonth() + 1}.{d.getDate()}</div>
+    </div>
+  );
+}
+
+function CatBadge({ catId }) {
+  const c = catOf(catId);
+  return (
+    <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 999, background: c.color + "1A", color: c.color, border: `1px solid ${c.color}55` }}>
+      {c.label}
+    </span>
+  );
+}
+
+function KpiChip({ label, value, strong }) {
+  return (
+    <div style={{ padding: "6px 12px", borderRadius: 8, textAlign: "center", background: strong ? C.profit + "14" : "#FFFFFF", border: `1px solid ${strong ? C.profit + "66" : C.line}` }}>
+      <div style={{ fontSize: 11, color: C.inkFaint }}>{label}</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: strong ? C.profit : C.ink }}>{value}</div>
+    </div>
+  );
+}
+
+const inputStyle = { width: "100%", fontSize: 13, padding: "6px 8px", borderRadius: 8, border: `1px solid ${C.line}`, background: "#FFFFFF" };
+
+function WeekMetricsEditor({ metrics, onCommit }) {
+  const [sales, setSales] = useState(metrics?.sales ?? "");
+  const [students, setStudents] = useState(metrics?.students ?? "");
+  const commit = () => onCommit({ sales: numOrNull(sales), students: numOrNull(students) });
+  return (
+    <div style={{ display: "flex", gap: 8 }}>
+      <label style={{ flex: 1 }}>
+        <span style={{ fontSize: 11, display: "block", marginBottom: 2, color: C.inkFaint }}>売上（円）</span>
+        <input inputMode="numeric" value={sales} onChange={(e) => setSales(e.target.value)} onBlur={commit} placeholder="例: 850000" style={inputStyle} />
+      </label>
+      <label style={{ width: "38%" }}>
+        <span style={{ fontSize: 11, display: "block", marginBottom: 2, color: C.inkFaint }}>生徒数（人）</span>
+        <input inputMode="numeric" value={students} onChange={(e) => setStudents(e.target.value)} onBlur={commit} placeholder="例: 120" style={inputStyle} />
+      </label>
+    </div>
+  );
+}
+
+function App() {
+  const [data, setData] = useState(loadData);
+  const [tab, setTab] = useState("day");
+  const [date, setDate] = useState(toKey(new Date()));
+  const [cat, setCat] = useState("music");
+  const [body, setBody] = useState("");
+  const [note, setNote] = useState("");
+  const [toast, setToast] = useState("");
+  const [costMonth, setCostMonth] = useState(toKey(new Date()).slice(0, 7));
+  const [fixedCost, setFixedCost] = useState("");
+  const [varCost, setVarCost] = useState("");
+  const [aiTarget, setAiTarget] = useState(null);
+  const [aiText, setAiText] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
+
+  const showToast = (msg, ms = 2200) => { setToast(msg); setTimeout(() => setToast(""), ms); };
+
+  const persist = (next) => {
+    setData(next);
+    if (!saveData(next)) showToast("保存に失敗しました（端末の空き容量を確認）", 3000);
+  };
+
+  // ---- 日報 ----
+  const addEntry = () => {
+    if (!body.trim()) return;
+    const entry = { id: Date.now().toString(36), date, cat, body: body.trim(), note: note.trim(), createdAt: new Date().toISOString() };
+    const entries = [...data.entries, entry].sort((a, b) => (a.date < b.date ? 1 : -1));
+    persist({ ...data, entries });
+    setBody(""); setNote("");
+    showToast("日報を記帳しました");
+  };
+  const removeEntry = (id) => persist({ ...data, entries: data.entries.filter((e) => e.id !== id) });
+
+  // ---- 週次指標・経費 ----
+  const setWeekMetrics = (wk, m) => persist({ ...data, weekMetrics: { ...data.weekMetrics, [wk]: m } });
+  const saveCosts = () => {
+    persist({ ...data, monthCosts: { ...data.monthCosts, [costMonth]: { fixed: numOrNull(fixedCost), variable: numOrNull(varCost) } } });
+    setFixedCost(""); setVarCost("");
+    showToast(`${fmtMonth(costMonth)}の経費を保存しました`);
+  };
+  const removeCosts = (mk) => {
+    const mc = { ...data.monthCosts };
+    delete mc[mk];
+    persist({ ...data, monthCosts: mc });
+  };
+
+  // ---- バックアップ ----
+  const exportJson = () => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `nippo-backup-${toKey(new Date())}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showToast("バックアップを書き出しました");
+  };
+  const importJson = (file) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (!parsed.entries || !Array.isArray(parsed.entries)) throw new Error("bad format");
+        if (!window.confirm("現在のデータをバックアップの内容で置き換えます。よろしいですか？")) return;
+        persist({ entries: parsed.entries, weekMetrics: parsed.weekMetrics || {}, monthCosts: parsed.monthCosts || {} });
+        showToast("バックアップを読み込みました");
+      } catch (e) {
+        showToast("読み込みに失敗しました。ファイル形式を確認してください", 3000);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // ---- 集計 ----
+  const byDay = useMemo(() => {
+    const m = {};
+    for (const e of data.entries) (m[e.date] = m[e.date] || []).push(e);
+    return Object.entries(m).sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  }, [data]);
+
+  const byWeek = useMemo(() => {
+    const m = {};
+    for (const e of data.entries) { const k = weekKeyOf(e.date); (m[k] = m[k] || []).push(e); }
+    for (const wk of Object.keys(data.weekMetrics)) m[wk] = m[wk] || [];
+    return Object.entries(m).sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  }, [data]);
+
+  const byMonth = useMemo(() => {
+    const m = {};
+    for (const e of data.entries) { const k = monthKeyOf(e.date); (m[k] = m[k] || []).push(e); }
+    for (const wk of Object.keys(data.weekMetrics)) { const mk = monthOfWeek(wk); m[mk] = m[mk] || []; }
+    for (const mk of Object.keys(data.monthCosts)) m[mk] = m[mk] || [];
+    return Object.entries(m).sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  }, [data]);
+
+  const monthFin = (mk) => {
+    const weeks = Object.entries(data.weekMetrics)
+      .filter(([wk]) => monthOfWeek(wk) === mk)
+      .sort((a, b) => (a[0] > b[0] ? 1 : -1));
+    const sales = weeks.reduce((s, [, m]) => (m.sales != null ? s + m.sales : s), 0);
+    const hasSales = weeks.some(([, m]) => m.sales != null);
+    const lastStudents = [...weeks].reverse().find(([, m]) => m.students != null);
+    const costs = data.monthCosts[mk] || {};
+    const gross = hasSales && costs.variable != null ? sales - costs.variable : null;
+    const operating = gross != null && costs.fixed != null ? gross - costs.fixed : null;
+    return {
+      sales: hasSales ? sales : null,
+      students: lastStudents ? lastStudents[1].students : null,
+      variable: costs.variable ?? null, fixed: costs.fixed ?? null,
+      gross, operating,
+    };
+  };
+
+  const weekGross = (wk) => {
+    const m = data.weekMetrics[wk];
+    if (!m || m.sales == null) return null;
+    const fin = monthFin(monthOfWeek(wk));
+    if (fin.variable == null || fin.sales == null || fin.sales === 0) return null;
+    return m.sales - fin.variable * (m.sales / fin.sales);
+  };
+
+  const catCounts = (list) => {
+    const m = {};
+    list.forEach((e) => (m[e.cat] = (m[e.cat] || 0) + 1));
+    return m;
+  };
+
+  // ---- 共有テキスト ----
+  const copyToClipboard = async (text) => {
+    try { await navigator.clipboard.writeText(text); return true; }
+    catch (e) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        return ok;
+      } catch (e2) { return false; }
+    }
+  };
+
+  const metricsLines = (kind, key) => {
+    if (kind === "週報") {
+      const m = data.weekMetrics[key] || {};
+      const g = weekGross(key);
+      return ["■数字", `売上: ${fmtYen(m.sales)} ／ 生徒数: ${m.students ?? "—"}人 ／ 粗利(按分): ${fmtYen(g)}`, ""];
+    }
+    const f = monthFin(key);
+    return [
+      "■数字",
+      `売上: ${fmtYen(f.sales)} ／ 生徒数: ${f.students ?? "—"}人`,
+      `変動費: ${fmtYen(f.variable)} ／ 固定費: ${fmtYen(f.fixed)}`,
+      `粗利: ${fmtYen(f.gross)} ／ 営業利益: ${fmtYen(f.operating)}`,
+      "",
+    ];
+  };
+
+  const buildShareText = (label, list, kind, key) => {
+    const sorted = list.slice().sort((a, b) => (a.date > b.date ? 1 : -1));
+    const who = data.userName ? `（${data.userName}）` : "";
+    const lines = [`【${label}】ニュースター楽器${who}`, "", ...metricsLines(kind, key)];
+    for (const c of CATEGORIES) {
+      const items = sorted.filter((e) => e.cat === c.id);
+      if (!items.length) continue;
+      lines.push(`▼${c.label}（${items.length}件）`);
+      for (const e of items) lines.push(`・${fmtDate(e.date)} ${e.body}`);
+      lines.push("");
+    }
+    const notes = sorted.filter((e) => e.note);
+    if (notes.length) {
+      lines.push("※特記・申し送り");
+      for (const e of notes) lines.push(`・${fmtDate(e.date)} ${e.note}`);
+      lines.push("");
+    }
+    lines.push(`（日報 全${list.length}件）`);
+    return lines.join("\n");
+  };
+
+  const buildDayText = (dateStr, list) => {
+    const who = data.userName ? `（${data.userName}）` : "";
+    const lines = [`【日報 ${fmtDate(dateStr)}】ニュースター楽器${who}`, ""];
+    for (const c of CATEGORIES) {
+      const items = list.filter((e) => e.cat === c.id);
+      if (!items.length) continue;
+      lines.push(`▼${c.label}`);
+      for (const e of items) lines.push(`・${e.body}`);
+      lines.push("");
+    }
+    const notes = list.filter((e) => e.note);
+    if (notes.length) {
+      lines.push("※特記・申し送り");
+      for (const e of notes) lines.push(`・${e.note}`);
+      lines.push("");
+    }
+    lines.push("以上");
+    return lines.join("\n");
+  };
+
+  const shareDay = async (dateStr, list) => {
+    const ok = await copyToClipboard(buildDayText(dateStr, list));
+    showToast(ok ? "日報をコピーしました。LINEやSlackに貼り付けてください" : "コピーに失敗しました", 2500);
+  };
+
+  const shareAsText = async (label, list, kind, key) => {
+    const ok = await copyToClipboard(buildShareText(label, list, kind, key));
+    showToast(ok ? "コピーしました。LINEやSlackに貼り付けてください" : "コピーに失敗しました", 2500);
+  };
+
+  const copyAiText = async () => {
+    const ok = await copyToClipboard(aiText);
+    showToast(ok ? "AIドラフトをコピーしました" : "コピーに失敗しました", 2500);
+  };
+
+  // ---- AI（Netlify Function経由）----
+  const generateReport = async (label, list, kind, key) => {
+    setAiTarget(label); setAiText(""); setAiError(""); setAiLoading(true);
+    const lines = list.slice().sort((a, b) => (a.date > b.date ? 1 : -1))
+      .map((e) => `- ${e.date} [${catOf(e.cat).label}] ${e.body}${e.note ? `（特記: ${e.note}）` : ""}`)
+      .join("\n");
+    const nums = metricsLines(kind, key).join("\n");
+    const prompt = `あなたは中小企業（音楽教室・楽器販売・学習塾・ポスティング業を営む会社）の${kind}ドラフト作成係です。以下の日報一覧と経営数字から、簡潔で読みやすい${kind}を日本語で作成してください。構成: ①概況（2〜3文、数字に触れる） ②数字サマリー ③事業別の動き（箇条書き、動きのあった事業のみ） ④特記・懸念事項 ⑤来期への申し送り。誇張せず、与えられた事実のみを使ってください。数字が「—」の項目は未入力なので言及しないでください。前置きや後書きは不要で、${kind}本文のみを出力してください。\n\n対象期間: ${label}\n\n経営数字:\n${nums}\n日報一覧:\n${lines || "（日報なし）"}`;
+    try {
+      const res = await fetch("/.netlify/functions/generate-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const json = await res.json();
+      if (!json.text) throw new Error("empty");
+      setAiText(json.text);
+    } catch (e) {
+      setAiError("生成に失敗しました。Netlify FunctionsとAPIキー（ANTHROPIC_API_KEY）の設定を確認してください");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  // ---- render ----
+  const EntryCard = ({ e, showStamp }) => (
+    <div style={{ display: "flex", gap: 12, padding: 12, borderRadius: 8, background: "#FFFFFF", border: `1px solid ${C.line}` }}>
+      {showStamp && <DateStamp dateStr={e.date} />}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+          {!showStamp && <span style={{ fontSize: 11, color: C.inkFaint }}>{fmtDate(e.date)}</span>}
+          <CatBadge catId={e.cat} />
+        </div>
+        <p style={{ fontSize: 13, whiteSpace: "pre-wrap", color: C.ink }}>{e.body}</p>
+        {e.note && <p style={{ fontSize: 11, marginTop: 4, color: C.shu }}>※ {e.note}</p>}
+      </div>
+      <button onClick={() => removeEntry(e.id)} style={{ fontSize: 11, alignSelf: "flex-start", padding: "0 4px", color: C.inkFaint }} aria-label="この日報を削除">✕</button>
+    </div>
+  );
+
+  const ReportButtons = ({ label, list, kind, k }) => (
+    <React.Fragment>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={() => shareAsText(label, list, kind, k)}
+          style={{ flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 13, fontWeight: 500, background: "#FFFFFF", color: C.indigo, border: `1.5px solid ${C.indigo}` }}>
+          テキストをコピー
+        </button>
+        <button onClick={() => generateReport(label, list, kind, k)} disabled={aiLoading}
+          style={{ flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 13, fontWeight: 500, background: C.indigo, color: C.paper, opacity: aiLoading && aiTarget === label ? 0.6 : 1 }}>
+          {aiLoading && aiTarget === label ? "生成中…" : `AIで${kind}を生成`}
+        </button>
+      </div>
+      {aiTarget === label && aiError && <p style={{ fontSize: 11, color: C.shu }}>{aiError}</p>}
+      {aiTarget === label && aiText && (
+        <div style={{ padding: 12, borderRadius: 8, fontSize: 13, whiteSpace: "pre-wrap", background: "#FFFFFF", border: `1px dashed ${C.indigo}`, color: C.ink }}>
+          {aiText}
+          <button onClick={copyAiText} style={{ marginTop: 12, width: "100%", padding: "6px 0", borderRadius: 8, fontSize: 11, fontWeight: 500, background: C.mist, color: C.indigo }}>
+            このドラフトをコピー
+          </button>
+        </div>
+      )}
+    </React.Fragment>
+  );
+
+  const sectionHeader = (label, sub, counts) => (
+    <header style={{ padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, background: C.mist }}>
+      <div>
+        <div style={{ fontFamily: "'Hiragino Mincho ProN','Yu Mincho',serif", fontWeight: 700, color: C.indigo }}>{label}</div>
+        <div style={{ fontSize: 11, color: C.inkFaint }}>{sub}</div>
+      </div>
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        {CATEGORIES.filter((c) => counts[c.id]).map((c) => (
+          <span key={c.id} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 999, background: c.color + "1A", color: c.color }}>
+            {c.label} {counts[c.id]}
+          </span>
+        ))}
+      </div>
+    </header>
+  );
+
+  const tabs = [
+    { id: "day", label: "記帳" }, { id: "week", label: "週報" },
+    { id: "month", label: "月報" }, { id: "cost", label: "経費" },
+  ];
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.paper, color: C.ink, fontFamily: "'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif" }}>
+      <header style={{ padding: "24px 20px 16px", background: C.indigo, display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <h1 style={{ fontFamily: "'Hiragino Mincho ProN','Yu Mincho',serif", color: C.paper, fontSize: 22, letterSpacing: "0.12em", fontWeight: 700 }}>業務日誌</h1>
+          <p style={{ fontSize: 11, marginTop: 4, color: "#AEB9CC" }}>日報と数字を一度入れれば、週報・月報・粗利は自動で束ねられます</p>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={exportJson} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 999, background: C.indigoDeep, color: "#AEB9CC", border: "1px solid #35486B" }}>書き出し</button>
+          <label style={{ fontSize: 11, padding: "4px 10px", borderRadius: 999, background: C.indigoDeep, color: "#AEB9CC", border: "1px solid #35486B", cursor: "pointer" }}>
+            読み込み
+            <input type="file" accept="application/json" style={{ display: "none" }}
+              onChange={(e) => { if (e.target.files[0]) importJson(e.target.files[0]); e.target.value = ""; }} />
+          </label>
+        </div>
+      </header>
+
+      <nav style={{ display: "flex", padding: "0 16px", marginBottom: -1, overflowX: "auto", background: C.indigo }}>
+        {tabs.map((t) => (
+          <button key={t.id} onClick={() => { setTab(t.id); setAiTarget(null); setAiText(""); }}
+            style={{
+              padding: "8px 16px", fontSize: 13, borderRadius: "8px 8px 0 0", marginRight: 4, whiteSpace: "nowrap",
+              ...(tab === t.id
+                ? { background: C.paper, color: C.indigo, fontWeight: 700 }
+                : { background: C.indigoDeep, color: "#8FA0BC" }),
+            }}>
+            {t.label}
+          </button>
+        ))}
+      </nav>
+
+      <main style={{ padding: 16, maxWidth: 640, margin: "0 auto", paddingBottom: 64 }}>
+        {tab === "day" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <div style={{ borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 12, background: "#FFFFFF", border: `1px solid ${C.line}` }}>
+              <input
+                value={data.userName || ""}
+                onChange={(ev) => setData({ ...data, userName: ev.target.value })}
+                onBlur={() => persist(data)}
+                placeholder="記入者名（コピーした報告に載ります）"
+                style={{ ...inputStyle, background: C.paper }}
+              />
+              <div style={{ display: "flex", gap: 8 }}>
+                <input type="date" value={date} onChange={(ev) => setDate(ev.target.value)} style={{ ...inputStyle, flex: 1, background: C.paper }} />
+                <select value={cat} onChange={(ev) => setCat(ev.target.value)} style={{ ...inputStyle, flex: 1, background: C.paper }}>
+                  {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                </select>
+              </div>
+              <textarea value={body} onChange={(ev) => setBody(ev.target.value)} rows={3}
+                placeholder="今日の業務内容を書く（例: 体験レッスン2件対応、うち1件入会見込み）"
+                style={{ ...inputStyle, resize: "none", background: C.paper }} />
+              <input value={note} onChange={(ev) => setNote(ev.target.value)}
+                placeholder="特記事項（任意・上長への申し送りなど）"
+                style={{ ...inputStyle, background: C.paper }} />
+              <button onClick={addEntry} disabled={!body.trim()}
+                style={{ width: "100%", padding: "10px 0", borderRadius: 8, fontWeight: 500, fontSize: 13, background: body.trim() ? C.shu : C.line, color: body.trim() ? C.paper : C.inkFaint }}>
+                記帳する
+              </button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {byDay.length === 0
+                ? <p style={{ fontSize: 13, textAlign: "center", padding: "32px 0", color: C.inkFaint }}>帳面はまだ白紙です。最初の一件をどうぞ。</p>
+                : byDay.map(([d, list]) => (
+                  <div key={d} style={{ borderRadius: 12, border: `1px solid ${C.line}`, background: "#FFFFFF", padding: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                      <DateStamp dateStr={d} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: C.indigo }}>{fmtDate(d)}</div>
+                        <div style={{ fontSize: 11, color: C.inkFaint }}>{list.length}件</div>
+                      </div>
+                      <button onClick={() => shareDay(d, list)}
+                        style={{ fontSize: 11, padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${C.indigo}`, color: C.indigo, background: "#FFFFFF", fontWeight: 500 }}>
+                        日報をコピー
+                      </button>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {list.map((e) => <EntryCard key={e.id} e={e} showStamp={false} />)}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {tab === "week" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+            {byWeek.length === 0 && <p style={{ fontSize: 13, textAlign: "center", padding: "40px 0", color: C.inkFaint }}>まだ日報がありません。「記帳」タブから最初の一件を書くと、ここに自動で集計されます。</p>}
+            {byWeek.map(([wk, list]) => {
+              const label = `週報 ${fmtWeekRange(wk)}`;
+              const m = data.weekMetrics[wk] || {};
+              const g = weekGross(wk);
+              const mk = monthOfWeek(wk);
+              const hasVar = (data.monthCosts[mk] || {}).variable != null;
+              return (
+                <section key={wk} style={{ borderRadius: 12, overflow: "hidden", border: `1px solid ${C.line}`, background: C.paper }}>
+                  {sectionHeader(label, `日報 ${list.length}件`, catCounts(list))}
+                  <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+                    <WeekMetricsEditor key={wk + JSON.stringify(m)} metrics={m} onCommit={(v) => setWeekMetrics(wk, v)} />
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <KpiChip label="売上" value={fmtYen(m.sales)} />
+                      <KpiChip label="生徒数" value={m.students != null ? `${m.students}人` : "—"} />
+                      <KpiChip label="粗利（按分）" value={fmtYen(g)} strong={g != null && g >= 0} />
+                    </div>
+                    {m.sales != null && !hasVar && (
+                      <p style={{ fontSize: 11, color: C.inkFaint }}>粗利を出すには「経費」タブで{fmtMonth(mk)}の変動費を入力してください</p>
+                    )}
+                    {list.slice().sort((a, b) => (a.date > b.date ? 1 : -1)).map((e) => <EntryCard key={e.id} e={e} showStamp={false} />)}
+                    <ReportButtons label={label} list={list} kind="週報" k={wk} />
+                  </div>
+                </section>
+              );
+            })}
+            {byWeek.length > 0 && <p style={{ fontSize: 11, textAlign: "center", color: C.inkFaint }}>週の粗利 = 週売上 −（月変動費を売上比で按分）。週は月曜の属する月に計上されます</p>}
+          </div>
+        )}
+
+        {tab === "month" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+            {byMonth.length === 0 && <p style={{ fontSize: 13, textAlign: "center", padding: "40px 0", color: C.inkFaint }}>まだデータがありません。日報・売上・経費のいずれかを入力すると、ここに月次で集計されます。</p>}
+            {byMonth.map(([mk, list]) => {
+              const label = `月報 ${fmtMonth(mk)}`;
+              const f = monthFin(mk);
+              return (
+                <section key={mk} style={{ borderRadius: 12, overflow: "hidden", border: `1px solid ${C.line}`, background: C.paper }}>
+                  {sectionHeader(label, `日報 ${list.length}件`, catCounts(list))}
+                  <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                      <KpiChip label="売上" value={fmtYen(f.sales)} />
+                      <KpiChip label="生徒数" value={f.students != null ? `${f.students}人` : "—"} />
+                      <KpiChip label="変動費" value={fmtYen(f.variable)} />
+                      <KpiChip label="固定費" value={fmtYen(f.fixed)} />
+                      <KpiChip label="粗利" value={fmtYen(f.gross)} strong />
+                      <KpiChip label="営業利益" value={fmtYen(f.operating)} strong={f.operating != null && f.operating >= 0} />
+                    </div>
+                    {f.sales != null && f.variable == null && (
+                      <p style={{ fontSize: 11, color: C.inkFaint }}>粗利を出すには「経費」タブで{fmtMonth(mk)}の変動費を入力してください</p>
+                    )}
+                    {list.slice().sort((a, b) => (a.date > b.date ? 1 : -1)).map((e) => <EntryCard key={e.id} e={e} showStamp={false} />)}
+                    <ReportButtons label={label} list={list} kind="月報" k={mk} />
+                  </div>
+                </section>
+              );
+            })}
+            {byMonth.length > 0 && <p style={{ fontSize: 11, textAlign: "center", color: C.inkFaint }}>粗利 = 売上 − 変動費 ／ 営業利益 = 粗利 − 固定費 ／ 生徒数は月内最終週の値</p>}
+          </div>
+        )}
+
+        {tab === "cost" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <div style={{ borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 12, background: "#FFFFFF", border: `1px solid ${C.line}` }}>
+              <div style={{ fontFamily: "'Hiragino Mincho ProN','Yu Mincho',serif", fontWeight: 700, color: C.indigo }}>月次経費の記帳</div>
+              <label>
+                <span style={{ fontSize: 11, display: "block", marginBottom: 2, color: C.inkFaint }}>対象月</span>
+                <input type="month" value={costMonth} onChange={(e) => setCostMonth(e.target.value)} style={{ ...inputStyle, background: C.paper }} />
+              </label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <label style={{ flex: 1 }}>
+                  <span style={{ fontSize: 11, display: "block", marginBottom: 2, color: C.inkFaint }}>固定費（円）家賃・人件費など</span>
+                  <input inputMode="numeric" value={fixedCost} onChange={(e) => setFixedCost(e.target.value)} placeholder="例: 1200000" style={{ ...inputStyle, background: C.paper }} />
+                </label>
+                <label style={{ flex: 1 }}>
+                  <span style={{ fontSize: 11, display: "block", marginBottom: 2, color: C.inkFaint }}>変動費（円）仕入・外注など</span>
+                  <input inputMode="numeric" value={varCost} onChange={(e) => setVarCost(e.target.value)} placeholder="例: 350000" style={{ ...inputStyle, background: C.paper }} />
+                </label>
+              </div>
+              <button onClick={saveCosts}
+                disabled={numOrNull(fixedCost) == null && numOrNull(varCost) == null}
+                style={{
+                  width: "100%", padding: "10px 0", borderRadius: 8, fontWeight: 500, fontSize: 13,
+                  background: (numOrNull(fixedCost) != null || numOrNull(varCost) != null) ? C.shu : C.line,
+                  color: (numOrNull(fixedCost) != null || numOrNull(varCost) != null) ? C.paper : C.inkFaint,
+                }}>
+                保存する
+              </button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {Object.keys(data.monthCosts).length === 0
+                ? <p style={{ fontSize: 13, textAlign: "center", padding: "32px 0", color: C.inkFaint }}>経費はまだ未入力です。月を選んで固定費・変動費を保存すると、週報・月報の粗利計算に反映されます。</p>
+                : Object.entries(data.monthCosts).sort((a, b) => (a[0] < b[0] ? 1 : -1)).map(([mk, c]) => (
+                  <div key={mk} style={{ display: "flex", alignItems: "center", gap: 12, padding: 12, borderRadius: 8, background: "#FFFFFF", border: `1px solid ${C.line}` }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.indigo }}>{fmtMonth(mk)}</div>
+                      <div style={{ fontSize: 11, color: C.inkFaint }}>固定費 {fmtYen(c.fixed)} ／ 変動費 {fmtYen(c.variable)}</div>
+                    </div>
+                    <button onClick={() => { setCostMonth(mk); setFixedCost(c.fixed ?? ""); setVarCost(c.variable ?? ""); }}
+                      style={{ fontSize: 11, padding: "4px 8px", borderRadius: 8, background: C.mist, color: C.indigo }}>編集</button>
+                    <button onClick={() => removeCosts(mk)} style={{ fontSize: 11, padding: "0 4px", color: C.inkFaint }} aria-label={`${fmtMonth(mk)}の経費を削除`}>✕</button>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+      </main>
+
+      {toast && (
+        <div style={{ position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", padding: "8px 16px", borderRadius: 999, fontSize: 13, background: C.indigo, color: C.paper, zIndex: 10 }}>
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
