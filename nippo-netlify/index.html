@@ -76,10 +76,10 @@ const loadData = () => {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const d = JSON.parse(raw);
-      return { entries: [], weekMetrics: {}, monthCosts: {}, userName: "", ...d };
+      return { entries: [], weekMetrics: {}, monthCosts: {}, userName: "", tasks: [], goals: [], ...d };
     }
   } catch (e) {}
-  return { entries: [], weekMetrics: {}, monthCosts: {}, userName: "" };
+  return { entries: [], weekMetrics: {}, monthCosts: {}, userName: "", tasks: [], goals: [] };
 };
 const saveData = (d) => {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); return true; }
@@ -148,6 +148,9 @@ function App() {
   const [cat, setCat] = useState("music");
   const [body, setBody] = useState("");
   const [note, setNote] = useState("");
+  const [good, setGood] = useState("");
+  const [concern, setConcern] = useState("");
+  const [editingId, setEditingId] = useState(null);
   const [toast, setToast] = useState("");
   const [costMonth, setCostMonth] = useState(toKey(new Date()).slice(0, 7));
   const [fixedCost, setFixedCost] = useState("");
@@ -165,15 +168,38 @@ function App() {
   };
 
   // ---- 日報 ----
+  const clearForm = () => { setBody(""); setNote(""); setGood(""); setConcern(""); };
   const addEntry = () => {
     if (!body.trim()) return;
-    const entry = { id: Date.now().toString(36), date, cat, body: body.trim(), note: note.trim(), createdAt: new Date().toISOString() };
-    const entries = [...data.entries, entry].sort((a, b) => (a.date < b.date ? 1 : -1));
-    persist({ ...data, entries });
-    setBody(""); setNote("");
-    showToast("日報を記帳しました");
+    if (editingId) {
+      const entries = data.entries
+        .map((e) => e.id === editingId
+          ? { ...e, date, cat, body: body.trim(), note: note.trim(), good: good.trim(), concern: concern.trim() }
+          : e)
+        .sort((a, b) => (a.date < b.date ? 1 : -1));
+      persist({ ...data, entries });
+      setEditingId(null);
+      showToast("日報を更新しました");
+    } else {
+      const entry = { id: Date.now().toString(36), date, cat, body: body.trim(), note: note.trim(), good: good.trim(), concern: concern.trim(), createdAt: new Date().toISOString() };
+      const entries = [...data.entries, entry].sort((a, b) => (a.date < b.date ? 1 : -1));
+      persist({ ...data, entries });
+      showToast("日報を記帳しました");
+    }
+    clearForm();
   };
-  const removeEntry = (id) => persist({ ...data, entries: data.entries.filter((e) => e.id !== id) });
+  const startEdit = (e) => {
+    setEditingId(e.id);
+    setDate(e.date); setCat(e.cat);
+    setBody(e.body); setNote(e.note || ""); setGood(e.good || ""); setConcern(e.concern || "");
+    setTab("day");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const cancelEdit = () => { setEditingId(null); clearForm(); };
+  const removeEntry = (id) => {
+    if (editingId === id) cancelEdit();
+    persist({ ...data, entries: data.entries.filter((e) => e.id !== id) });
+  };
 
   // ---- 週次指標・経費 ----
   const setWeekMetrics = (wk, m) => persist({ ...data, weekMetrics: { ...data.weekMetrics, [wk]: m } });
@@ -186,6 +212,68 @@ function App() {
     const mc = { ...data.monthCosts };
     delete mc[mk];
     persist({ ...data, monthCosts: mc });
+  };
+
+  // ---- タスク ----
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskCat, setTaskCat] = useState("music");
+  const [taskDue, setTaskDue] = useState("");
+
+  const addTask = () => {
+    if (!taskTitle.trim()) return;
+    const t = { id: Date.now().toString(36), title: taskTitle.trim(), cat: taskCat, due: taskDue || null, done: false, logged: false, createdAt: new Date().toISOString() };
+    persist({ ...data, tasks: [...(data.tasks || []), t] });
+    setTaskTitle(""); setTaskDue("");
+    showToast("タスクを追加しました");
+  };
+  const toggleTask = (id) =>
+    persist({ ...data, tasks: data.tasks.map((t) => t.id === id ? { ...t, done: !t.done, doneAt: !t.done ? toKey(new Date()) : null } : t) });
+  const removeTask = (id) =>
+    persist({ ...data, tasks: data.tasks.filter((t) => t.id !== id) });
+  const taskToEntry = (t) => {
+    const entry = { id: Date.now().toString(36), date: t.doneAt || toKey(new Date()), cat: t.cat, body: `${t.title} 完了`, note: "", createdAt: new Date().toISOString() };
+    const entries = [...data.entries, entry].sort((a, b) => (a.date < b.date ? 1 : -1));
+    persist({ ...data, entries, tasks: data.tasks.map((x) => x.id === t.id ? { ...x, logged: true } : x) });
+    showToast("日報に記帳しました");
+  };
+  // ---- 目標 ----
+  const [goalText, setGoalText] = useState("");
+  const [goalDue, setGoalDue] = useState("");
+
+  const addGoal = () => {
+    if (!goalText.trim()) return;
+    const g = { id: Date.now().toString(36), text: goalText.trim(), due: goalDue || null, achieved: false, logged: false, createdAt: new Date().toISOString() };
+    persist({ ...data, goals: [...(data.goals || []), g] });
+    setGoalText(""); setGoalDue("");
+    showToast("目標を設定しました");
+  };
+  const toggleGoal = (id) =>
+    persist({ ...data, goals: data.goals.map((g) => g.id === id ? { ...g, achieved: !g.achieved, achievedAt: !g.achieved ? toKey(new Date()) : null } : g) });
+  const removeGoal = (id) =>
+    persist({ ...data, goals: data.goals.filter((g) => g.id !== id) });
+  const goalToEntry = (g) => {
+    const entry = { id: Date.now().toString(36), date: g.achievedAt || toKey(new Date()), cat: "admin", body: `目標達成: ${g.text}`, note: "", createdAt: new Date().toISOString() };
+    const entries = [...data.entries, entry].sort((a, b) => (a.date < b.date ? 1 : -1));
+    persist({ ...data, entries, goals: data.goals.map((x) => x.id === g.id ? { ...x, logged: true } : x) });
+    showToast("日報に記帳しました");
+  };
+  const openGoals = (data.goals || []).filter((g) => !g.achieved);
+  const today = toKey(new Date());
+
+  const copyOpenTasks = async () => {
+    const open = (data.tasks || []).filter((t) => !t.done);
+    const who = data.userName ? `（${data.userName}）` : "";
+    const lines = [`【タスク一覧 ${fmtDate(toKey(new Date()))}時点】ニュースター楽器${who}`, ""];
+    const sorted = open.slice().sort((a, b) => {
+      if (a.due && b.due) return a.due < b.due ? -1 : 1;
+      if (a.due) return -1;
+      if (b.due) return 1;
+      return 0;
+    });
+    for (const t of sorted) lines.push(`・${t.due ? `${fmtDate(t.due)}まで ` : ""}${t.title}（${catOf(t.cat).label}）`);
+    lines.push("", `未完了 ${open.length}件`);
+    const ok = await copyToClipboard(lines.join("\n"));
+    showToast(ok ? "タスク一覧をコピーしました" : "コピーに失敗しました", 2500);
   };
 
   // ---- バックアップ ----
@@ -300,6 +388,8 @@ function App() {
     ];
   };
 
+  const ind = (s) => (s || "").split("\n").join("\n　");
+
   const buildShareText = (label, list, kind, key) => {
     const sorted = list.slice().sort((a, b) => (a.date > b.date ? 1 : -1));
     const who = data.userName ? `（${data.userName}）` : "";
@@ -308,13 +398,25 @@ function App() {
       const items = sorted.filter((e) => e.cat === c.id);
       if (!items.length) continue;
       lines.push(`▼${c.label}（${items.length}件）`);
-      for (const e of items) lines.push(`・${fmtDate(e.date)} ${e.body}`);
+      for (const e of items) lines.push(`・${fmtDate(e.date)} ${ind(e.body)}`);
       lines.push("");
     }
     const notes = sorted.filter((e) => e.note);
     if (notes.length) {
       lines.push("※特記・申し送り");
-      for (const e of notes) lines.push(`・${fmtDate(e.date)} ${e.note}`);
+      for (const e of notes) lines.push(`・${fmtDate(e.date)} ${ind(e.note)}`);
+      lines.push("");
+    }
+    const goods = sorted.filter((e) => e.good);
+    if (goods.length) {
+      lines.push("◎良かったこと");
+      for (const e of goods) lines.push(`・${fmtDate(e.date)} ${ind(e.good)}`);
+      lines.push("");
+    }
+    const concerns = sorted.filter((e) => e.concern);
+    if (concerns.length) {
+      lines.push("▲気になること");
+      for (const e of concerns) lines.push(`・${fmtDate(e.date)} ${ind(e.concern)}`);
       lines.push("");
     }
     lines.push(`（日報 全${list.length}件）`);
@@ -328,13 +430,25 @@ function App() {
       const items = list.filter((e) => e.cat === c.id);
       if (!items.length) continue;
       lines.push(`▼${c.label}`);
-      for (const e of items) lines.push(`・${e.body}`);
+      for (const e of items) lines.push(`・${ind(e.body)}`);
       lines.push("");
     }
     const notes = list.filter((e) => e.note);
     if (notes.length) {
       lines.push("※特記・申し送り");
-      for (const e of notes) lines.push(`・${e.note}`);
+      for (const e of notes) lines.push(`・${ind(e.note)}`);
+      lines.push("");
+    }
+    const goods = list.filter((e) => e.good);
+    if (goods.length) {
+      lines.push("◎良かったこと");
+      for (const e of goods) lines.push(`・${ind(e.good)}`);
+      lines.push("");
+    }
+    const concerns = list.filter((e) => e.concern);
+    if (concerns.length) {
+      lines.push("▲気になること");
+      for (const e of concerns) lines.push(`・${ind(e.concern)}`);
       lines.push("");
     }
     lines.push("以上");
@@ -360,7 +474,7 @@ function App() {
   const generateReport = async (label, list, kind, key) => {
     setAiTarget(label); setAiText(""); setAiError(""); setAiLoading(true);
     const lines = list.slice().sort((a, b) => (a.date > b.date ? 1 : -1))
-      .map((e) => `- ${e.date} [${catOf(e.cat).label}] ${e.body}${e.note ? `（特記: ${e.note}）` : ""}`)
+      .map((e) => `- ${e.date} [${catOf(e.cat).label}] ${e.body}${e.note ? `（特記: ${e.note}）` : ""}${e.good ? `（良かった: ${e.good}）` : ""}${e.concern ? `（気になる: ${e.concern}）` : ""}`)
       .join("\n");
     const nums = metricsLines(kind, key).join("\n");
     const prompt = `あなたは中小企業（音楽教室・楽器販売・学習塾・ポスティング業を営む会社）の${kind}ドラフト作成係です。以下の日報一覧と経営数字から、簡潔で読みやすい${kind}を日本語で作成してください。構成: ①概況（2〜3文、数字に触れる） ②数字サマリー ③事業別の動き（箇条書き、動きのあった事業のみ） ④特記・懸念事項 ⑤来期への申し送り。誇張せず、与えられた事実のみを使ってください。数字が「—」の項目は未入力なので言及しないでください。前置きや後書きは不要で、${kind}本文のみを出力してください。\n\n対象期間: ${label}\n\n経営数字:\n${nums}\n日報一覧:\n${lines || "（日報なし）"}`;
@@ -391,9 +505,14 @@ function App() {
           <CatBadge catId={e.cat} />
         </div>
         <p style={{ fontSize: 13, whiteSpace: "pre-wrap", color: C.ink }}>{e.body}</p>
-        {e.note && <p style={{ fontSize: 11, marginTop: 4, color: C.shu }}>※ {e.note}</p>}
+        {e.note && <p style={{ fontSize: 11, marginTop: 4, whiteSpace: "pre-wrap", color: C.shu }}>※ {e.note}</p>}
+        {e.good && <p style={{ fontSize: 11, marginTop: 4, whiteSpace: "pre-wrap", color: C.profit }}>◎ {e.good}</p>}
+        {e.concern && <p style={{ fontSize: 11, marginTop: 4, whiteSpace: "pre-wrap", color: "#A6721C" }}>▲ {e.concern}</p>}
       </div>
-      <button onClick={() => removeEntry(e.id)} style={{ fontSize: 11, alignSelf: "flex-start", padding: "0 4px", color: C.inkFaint }} aria-label="この日報を削除">✕</button>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignSelf: "flex-start", alignItems: "flex-end" }}>
+        <button onClick={() => removeEntry(e.id)} style={{ fontSize: 11, padding: "0 4px", color: C.inkFaint }} aria-label="この日報を削除">✕</button>
+        <button onClick={() => startEdit(e)} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: C.mist, color: C.indigo }}>編集</button>
+      </div>
     </div>
   );
 
@@ -438,7 +557,8 @@ function App() {
   );
 
   const tabs = [
-    { id: "day", label: "記帳" }, { id: "week", label: "週報" },
+    { id: "day", label: "記帳" }, { id: "task", label: "タスク" },
+    { id: "goal", label: "目標" }, { id: "week", label: "週報" },
     { id: "month", label: "月報" }, { id: "cost", label: "経費" },
   ];
 
@@ -473,6 +593,23 @@ function App() {
         ))}
       </nav>
 
+      {openGoals.length > 0 && (
+        <div onClick={() => setTab("goal")}
+          style={{ background: "#FFFFFF", borderBottom: `1px solid ${C.line}`, borderLeft: `4px solid ${C.shu}`, padding: "8px 16px", cursor: "pointer" }}>
+          {openGoals.map((g) => (
+            <div key={g.id} style={{ fontSize: 12, color: C.indigo, padding: "2px 0" }}>
+              <span style={{ color: C.shu, fontWeight: 700, marginRight: 6 }}>◆ 目標</span>
+              {g.text}
+              {g.due && (
+                <span style={{ marginLeft: 6, fontSize: 11, color: g.due < today ? C.shu : C.inkFaint }}>
+                  （{fmtDate(g.due)}まで{g.due < today ? "・期限超過" : ""}）
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <main style={{ padding: 16, maxWidth: 640, margin: "0 auto", paddingBottom: 64 }}>
         {tab === "day" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -493,13 +630,27 @@ function App() {
               <textarea value={body} onChange={(ev) => setBody(ev.target.value)} rows={3}
                 placeholder="今日の業務内容を書く（例: 体験レッスン2件対応、うち1件入会見込み）"
                 style={{ ...inputStyle, resize: "none", background: C.paper }} />
-              <input value={note} onChange={(ev) => setNote(ev.target.value)}
+              <textarea value={note} onChange={(ev) => setNote(ev.target.value)} rows={3}
                 placeholder="特記事項（任意・上長への申し送りなど）"
-                style={{ ...inputStyle, background: C.paper }} />
-              <button onClick={addEntry} disabled={!body.trim()}
-                style={{ width: "100%", padding: "10px 0", borderRadius: 8, fontWeight: 500, fontSize: 13, background: body.trim() ? C.shu : C.line, color: body.trim() ? C.paper : C.inkFaint }}>
-                記帳する
-              </button>
+                style={{ ...inputStyle, resize: "none", background: C.paper }} />
+              <textarea value={good} onChange={(ev) => setGood(ev.target.value)} rows={3}
+                placeholder="良かったこと（任意）"
+                style={{ ...inputStyle, resize: "none", background: C.paper }} />
+              <textarea value={concern} onChange={(ev) => setConcern(ev.target.value)} rows={3}
+                placeholder="気になること（任意）"
+                style={{ ...inputStyle, resize: "none", background: C.paper }} />
+              <div style={{ display: "flex", gap: 8 }}>
+                {editingId && (
+                  <button onClick={cancelEdit}
+                    style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontWeight: 500, fontSize: 13, background: "#FFFFFF", color: C.inkFaint, border: `1.5px solid ${C.line}` }}>
+                    キャンセル
+                  </button>
+                )}
+                <button onClick={addEntry} disabled={!body.trim()}
+                  style={{ flex: 2, padding: "10px 0", borderRadius: 8, fontWeight: 500, fontSize: 13, background: body.trim() ? (editingId ? C.indigo : C.shu) : C.line, color: body.trim() ? C.paper : C.inkFaint }}>
+                  {editingId ? "更新する" : "記帳する"}
+                </button>
+              </div>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {byDay.length === 0
@@ -632,6 +783,145 @@ function App() {
                   </div>
                 ))}
             </div>
+          </div>
+        )}
+
+        {tab === "task" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <div style={{ borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 12, background: "#FFFFFF", border: `1px solid ${C.line}` }}>
+              <input value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)}
+                placeholder="やることを書く（例: 懐メロエレクトーンのチラシ入稿）"
+                style={{ ...inputStyle, background: C.paper }} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <select value={taskCat} onChange={(e) => setTaskCat(e.target.value)} style={{ ...inputStyle, flex: 1, background: C.paper }}>
+                  {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                </select>
+                <input type="date" value={taskDue} onChange={(e) => setTaskDue(e.target.value)} style={{ ...inputStyle, flex: 1, background: C.paper }} />
+              </div>
+              <button onClick={addTask} disabled={!taskTitle.trim()}
+                style={{ width: "100%", padding: "10px 0", borderRadius: 8, fontWeight: 500, fontSize: 13, background: taskTitle.trim() ? C.shu : C.line, color: taskTitle.trim() ? C.paper : C.inkFaint }}>
+                タスクを追加
+              </button>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {(data.tasks || []).filter((t) => !t.done).length === 0
+                ? <p style={{ fontSize: 13, textAlign: "center", padding: "24px 0", color: C.inkFaint }}>未完了のタスクはありません。</p>
+                : (data.tasks || []).filter((t) => !t.done)
+                  .sort((a, b) => {
+                    if (a.due && b.due) return a.due < b.due ? -1 : 1;
+                    if (a.due) return -1;
+                    if (b.due) return 1;
+                    return 0;
+                  })
+                  .map((t) => (
+                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, borderRadius: 8, background: "#FFFFFF", border: `1px solid ${C.line}` }}>
+                      <button onClick={() => toggleTask(t.id)} aria-label="完了にする"
+                        style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${C.indigo}`, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, color: C.ink }}>{t.title}</div>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2 }}>
+                          <CatBadge catId={t.cat} />
+                          {t.due && (
+                            <span style={{ fontSize: 11, color: t.due < today ? C.shu : C.inkFaint, fontWeight: t.due < today ? 700 : 400 }}>
+                              {fmtDate(t.due)}まで{t.due < today ? "・期限超過" : ""}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <button onClick={() => removeTask(t.id)} style={{ fontSize: 11, padding: "0 4px", color: C.inkFaint }} aria-label="このタスクを削除">✕</button>
+                    </div>
+                  ))}
+              {(data.tasks || []).filter((t) => !t.done).length > 0 && (
+                <button onClick={copyOpenTasks}
+                  style={{ width: "100%", padding: "8px 0", borderRadius: 8, fontSize: 13, fontWeight: 500, background: "#FFFFFF", color: C.indigo, border: `1.5px solid ${C.indigo}` }}>
+                  未完了タスクをコピー
+                </button>
+              )}
+            </div>
+
+            {(data.tasks || []).some((t) => t.done) && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.inkFaint }}>完了済み</div>
+                {(data.tasks || []).filter((t) => t.done).map((t) => (
+                  <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, borderRadius: 8, background: C.mist, border: `1px solid ${C.line}` }}>
+                    <button onClick={() => toggleTask(t.id)} aria-label="未完了に戻す"
+                      style={{ width: 22, height: 22, borderRadius: "50%", background: C.profit, color: "#FFF", fontSize: 13, lineHeight: 1, flexShrink: 0 }}>✓</button>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: C.inkFaint, textDecoration: "line-through" }}>{t.title}</div>
+                      <div style={{ fontSize: 11, color: C.inkFaint, marginTop: 2 }}>{t.doneAt && `${fmtDate(t.doneAt)} 完了`}</div>
+                    </div>
+                    <button onClick={() => taskToEntry(t)} disabled={t.logged}
+                      style={{ fontSize: 11, padding: "6px 10px", borderRadius: 8, background: t.logged ? C.line : C.indigo, color: t.logged ? C.inkFaint : C.paper, fontWeight: 500 }}>
+                      {t.logged ? "記帳済み" : "日報に記帳"}
+                    </button>
+                    <button onClick={() => removeTask(t.id)} style={{ fontSize: 11, padding: "0 4px", color: C.inkFaint }} aria-label="このタスクを削除">✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === "goal" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <div style={{ borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 12, background: "#FFFFFF", border: `1px solid ${C.line}` }}>
+              <div style={{ fontFamily: "'Hiragino Mincho ProN','Yu Mincho',serif", fontWeight: 700, color: C.indigo }}>目標を掲げる</div>
+              <input value={goalText} onChange={(e) => setGoalText(e.target.value)}
+                placeholder="例: 9月末までに懐メロエレクトーン10名入会"
+                style={{ ...inputStyle, background: C.paper }} />
+              <label>
+                <span style={{ fontSize: 11, display: "block", marginBottom: 2, color: C.inkFaint }}>期限（任意）</span>
+                <input type="date" value={goalDue} onChange={(e) => setGoalDue(e.target.value)} style={{ ...inputStyle, background: C.paper }} />
+              </label>
+              <button onClick={addGoal} disabled={!goalText.trim()}
+                style={{ width: "100%", padding: "10px 0", borderRadius: 8, fontWeight: 500, fontSize: 13, background: goalText.trim() ? C.shu : C.line, color: goalText.trim() ? C.paper : C.inkFaint }}>
+                目標を設定
+              </button>
+              <p style={{ fontSize: 11, color: C.inkFaint }}>設定した目標は全タブの上部に常時表示されます。多すぎると効果が薄れるので、2〜3個に絞るのがおすすめです。</p>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {openGoals.length === 0
+                ? <p style={{ fontSize: 13, textAlign: "center", padding: "24px 0", color: C.inkFaint }}>掲げている目標はありません。</p>
+                : openGoals.map((g) => (
+                  <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, borderRadius: 8, background: "#FFFFFF", border: `1px solid ${C.line}`, borderLeft: `4px solid ${C.shu}` }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.indigo }}>{g.text}</div>
+                      {g.due && (
+                        <div style={{ fontSize: 11, marginTop: 2, color: g.due < today ? C.shu : C.inkFaint }}>
+                          {fmtDate(g.due)}まで{g.due < today ? "・期限超過" : ""}
+                        </div>
+                      )}
+                    </div>
+                    <button onClick={() => toggleGoal(g.id)}
+                      style={{ fontSize: 11, padding: "6px 10px", borderRadius: 8, background: C.profit, color: "#FFF", fontWeight: 500 }}>
+                      達成！
+                    </button>
+                    <button onClick={() => removeGoal(g.id)} style={{ fontSize: 11, padding: "0 4px", color: C.inkFaint }} aria-label="この目標を削除">✕</button>
+                  </div>
+                ))}
+            </div>
+
+            {(data.goals || []).some((g) => g.achieved) && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.inkFaint }}>達成済み</div>
+                {(data.goals || []).filter((g) => g.achieved).map((g) => (
+                  <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, borderRadius: 8, background: C.mist, border: `1px solid ${C.line}` }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: C.inkFaint, textDecoration: "line-through" }}>{g.text}</div>
+                      <div style={{ fontSize: 11, color: C.profit, marginTop: 2, fontWeight: 700 }}>{g.achievedAt && `${fmtDate(g.achievedAt)} 達成 🎉`}</div>
+                    </div>
+                    <button onClick={() => goalToEntry(g)} disabled={g.logged}
+                      style={{ fontSize: 11, padding: "6px 10px", borderRadius: 8, background: g.logged ? C.line : C.indigo, color: g.logged ? C.inkFaint : C.paper, fontWeight: 500 }}>
+                      {g.logged ? "記帳済み" : "日報に記帳"}
+                    </button>
+                    <button onClick={() => toggleGoal(g.id)} style={{ fontSize: 11, padding: "6px 8px", borderRadius: 8, background: "#FFFFFF", color: C.inkFaint, border: `1px solid ${C.line}` }}>戻す</button>
+                    <button onClick={() => removeGoal(g.id)} style={{ fontSize: 11, padding: "0 4px", color: C.inkFaint }} aria-label="この目標を削除">✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </main>
